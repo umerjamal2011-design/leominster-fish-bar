@@ -210,6 +210,16 @@ const App: React.FC = () => {
         };
     }, [session, fetchOrders]);
 
+    // Polling fallback: fetch orders every X seconds when realtime isn't available or as a backup.
+    useEffect(() => {
+        if (!session) return;
+        const POLL_INTERVAL_MS = 8000; // 8 seconds
+        const id = setInterval(() => {
+            fetchOrders();
+        }, POLL_INTERVAL_MS);
+        return () => clearInterval(id);
+    }, [session, fetchOrders]);
+
 
     const handleAddToCart = useCallback((itemToAdd: CartItem) => {
         setCart(prevCart => {
