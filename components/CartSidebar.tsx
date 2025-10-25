@@ -11,10 +11,15 @@ interface CartSidebarProps {
   onUpdateQuantity: (cartItemId: string, quantity: number) => void;
   onRemoveItem: (cartItemId: string) => void;
   onClearCart: () => void;
-  onPlaceOrder: (orderData: PlaceOrderData) => Promise<void>;
+  onPlaceOrder: (orderData: PlaceOrderData) => Promise<{ ok: boolean; message?: string }>;
 }
 
-const CheckoutForm: React.FC<{onPlaceOrder: (customer: Customer, paymentMethod: PaymentMethod) => void, orderType: OrderType}> = ({ onPlaceOrder, orderType }) => {
+const CheckoutForm: React.FC<{
+    onPlaceOrder: (customer: Customer, paymentMethod: PaymentMethod) => void,
+    orderType: OrderType,
+    isSubmitting: boolean,
+    errorMessage: string | null,
+}> = ({ onPlaceOrder, orderType, isSubmitting, errorMessage }) => {
     const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('card');
     
     const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -29,9 +34,14 @@ const CheckoutForm: React.FC<{onPlaceOrder: (customer: Customer, paymentMethod: 
         onPlaceOrder(customerDetails, paymentMethod);
     };
 
-    return (
-        <form onSubmit={handleSubmit} className="text-gray-800">
+  return (
+    <form onSubmit={handleSubmit} className="text-gray-800">
             <h3 className="text-lg font-semibold mb-4 text-gray-800">Your Details</h3>
+      {errorMessage && (
+        <div className="mb-4 rounded bg-red-100 p-3 text-sm text-red-700">
+          {errorMessage}
+        </div>
+      )}
             <div className="space-y-4">
                 <input type="text" name="name" placeholder="Name" required className="w-full p-2 border rounded"/>
                 <input type="text" name="address" placeholder="Address (for delivery)" required={orderType === 'delivery'} className="w-full p-2 border rounded"/>
@@ -62,8 +72,12 @@ const CheckoutForm: React.FC<{onPlaceOrder: (customer: Customer, paymentMethod: 
                 </div>
             )}
             
-            <button type="submit" className="w-full mt-6 bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-colors duration-200">
-                Place Order & Pay
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className="w-full mt-6 bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-colors duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed"
+      >
+        {isSubmitting ? 'Placing Order...' : 'Place Order & Pay'}
             </button>
         </form>
     );
@@ -75,6 +89,7 @@ const CartSidebar: React.FC<CartSidebarProps> = ({ isOpen, onClose, cartItems, o
   const [deliveryDistance, setDeliveryDistance] = useState(0); // in miles
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'form' | 'success'>('cart');
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const subtotal = useMemo(() => cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0), [cartItems]);
   
@@ -92,6 +107,7 @@ const CartSidebar: React.FC<CartSidebarProps> = ({ isOpen, onClose, cartItems, o
 
   const handleOrderPlaced = async (customer: Customer, paymentMethod: PaymentMethod) => {
     setIsPlacingOrder(true);
+    setErrorMessage(null);
     const orderData: PlaceOrderData = {
       customer,
       items: cartItems,
@@ -103,13 +119,20 @@ const CartSidebar: React.FC<CartSidebarProps> = ({ isOpen, onClose, cartItems, o
       status: 'New',
     };
     
-    await onPlaceOrder(orderData);
+    const result = await onPlaceOrder(orderData);
     
     setIsPlacingOrder(false);
+
+    if (!result.ok) {
+        setErrorMessage(result.message || 'Unable to place your order. Please try again.');
+        return;
+    }
+
     setCheckoutStep('success');
     setTimeout(() => {
         onClearCart();
         setCheckoutStep('cart');
+        setErrorMessage(null);
         onClose();
     }, 5000);
   }
@@ -120,6 +143,7 @@ const CartSidebar: React.FC<CartSidebarProps> = ({ isOpen, onClose, cartItems, o
     setTimeout(() => {
         setCheckoutStep('cart');
         setOrderType('collection');
+        setErrorMessage(null);
     }, 300);
   }
 
@@ -149,7 +173,12 @@ const CartSidebar: React.FC<CartSidebarProps> = ({ isOpen, onClose, cartItems, o
                     <p className="text-gray-600 mt-2">You will be redirected shortly.</p>
                 </div>
               ) : checkoutStep === 'form' ? (
-                <CheckoutForm onPlaceOrder={handleOrderPlaced} orderType={orderType} />
+                <CheckoutForm
+                    onPlaceOrder={handleOrderPlaced}
+                    orderType={orderType}
+                    isSubmitting={isPlacingOrder}
+                    errorMessage={errorMessage}
+                />
               ) : (
                 <>
                   {cartItems.map(item => (

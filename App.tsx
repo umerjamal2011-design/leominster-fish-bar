@@ -251,58 +251,102 @@ const App: React.FC = () => {
         // The onAuthStateChange listener will handle navigation.
     };
     
-    const handlePlaceOrder = async (orderData: Omit<Order, 'id' | 'order_uid' | 'created_at' | 'items'> & { items: CartItem[] }) => {
-        // 1. Find or create customer
-        let customerId;
-        const { data: existingCustomer } = await supabase.from('customers').select('id').eq('email', orderData.customer.email).single();
+    const handlePlaceOrder = async (
+        orderData: Omit<Order, 'id' | 'order_uid' | 'created_at' | 'items'> & { items: CartItem[] }
+    ): Promise<{ ok: boolean; message?: string }> => {
+        try {
+            // 1. Find or create customer
+            let customerId: number | undefined;
+            const { data: existingCustomer, error: existingCustomerError } = await supabase
+                .from('customers')
+                .select('id')
+                .eq('email', orderData.customer.email)
+                .maybeSingle();
 
-        if (existingCustomer) {
-            customerId = existingCustomer.id;
-        } else {
-            const { data: newCustomer, error: customerError } = await supabase.from('customers').insert(orderData.customer).select('id').single();
-            if (customerError || !newCustomer) {
-                console.error("Error creating customer", customerError);
-                return; // Or show error to user
+            if (existingCustomerError) {
+                console.error('Error looking up customer', existingCustomerError);
+                return { ok: false, message: 'Unable to verify your customer details. Please try again.' };
             }
-            customerId = newCustomer.id;
+
+            if (existingCustomer?.id) {
+                customerId = existingCustomer.id;
+            } else {
+                const { data: newCustomer, error: customerError } = await supabase
+                    .from('customers')
+                    .insert(orderData.customer)
+                    .select('id')
+                    .single();
+
+                if (customerError || !newCustomer) {
+                    console.error('Error creating customer', customerError);
+                    return {
+                        ok: false,
+                        message: customerError?.message || 'We could not create your customer record. Please try again.',
+                    };
+                }
+
+                customerId = newCustomer.id;
+            }
+
+            if (!customerId) {
+                return { ok: false, message: 'Customer information is missing. Please try again.' };
+            }
+
+            // 2. Create the order
+            const { data: newOrder, error: orderError } = await supabase
+                .from('orders')
+                .insert({
+                    customer_id: customerId,
+                    subtotal: orderData.subtotal,
+                    delivery_charge: orderData.delivery_charge,
+                    total: orderData.total,
+                    order_type: orderData.order_type,
+                    payment_method: orderData.payment_method,
+                    status: 'New',
+                })
+                .select()
+                .single();
+
+            if (orderError || !newOrder) {
+                console.error('Error creating order', orderError);
+                return {
+                    ok: false,
+                    message: orderError?.message || 'Unable to create your order. Please try again.',
+                };
+            }
+
+            // 3. Create the order items
+            const orderItems = orderData.items.map(cartItem => ({
+                order_id: newOrder.id,
+                menu_item_id: cartItem.menuItem.id,
+                menu_item_name: cartItem.menuItem.name,
+                quantity: cartItem.quantity,
+                unit_price: cartItem.unitPrice,
+                customizations: cartItem.customizations,
+            }));
+
+            const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
+
+            if (itemsError) {
+                console.error('Error creating order items', itemsError);
+                await supabase.from('orders').delete().eq('id', newOrder.id);
+                return {
+                    ok: false,
+                    message: itemsError.message || 'Unable to save the items in your order. Please try again.',
+                };
+            }
+            
+            // Refresh orders list for admin
+            await fetchOrders();
+
+            return { ok: true };
+        } catch (error: any) {
+            console.error('Unexpected error placing order', error);
+            return {
+                ok: false,
+                message: error?.message || 'Something went wrong while placing your order. Please try again.',
+            };
         }
-
-        // 2. Create the order
-        const { data: newOrder, error: orderError } = await supabase.from('orders').insert({
-            customer_id: customerId,
-            subtotal: orderData.subtotal,
-            delivery_charge: orderData.delivery_charge,
-            total: orderData.total,
-            order_type: orderData.order_type,
-            payment_method: orderData.payment_method,
-            status: 'New'
-        }).select().single();
-
-        if (orderError || !newOrder) {
-            console.error("Error creating order", orderError);
-            return;
-        }
-
-        // 3. Create the order items
-        const orderItems = orderData.items.map(cartItem => ({
-            order_id: newOrder.id,
-            menu_item_id: cartItem.menuItem.id,
-            menu_item_name: cartItem.menuItem.name,
-            quantity: cartItem.quantity,
-            unit_price: cartItem.unitPrice,
-            customizations: cartItem.customizations
-        }));
-
-        const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
-
-        if (itemsError) {
-            console.error("Error creating order items", itemsError);
-            // Here you might want to delete the order that was just created to avoid orphaned orders.
-            return;
-        }
-        
-        // Refresh orders list for admin
-        await fetchOrders();
     };
 
 
