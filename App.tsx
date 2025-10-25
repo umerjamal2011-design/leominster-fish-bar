@@ -189,6 +189,27 @@ const App: React.FC = () => {
         fetchOrders();
     }, [session, fetchOrders]);
 
+    useEffect(() => {
+        if (!session) {
+            return;
+        }
+
+        // Subscribe to realtime changes so every admin session sees new/updated orders instantly.
+        const channel = supabase
+            .channel('orders-realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+                fetchOrders();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
+                fetchOrders();
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [session, fetchOrders]);
+
 
     const handleAddToCart = useCallback((itemToAdd: CartItem) => {
         setCart(prevCart => {
